@@ -55,6 +55,7 @@ func_input = st.sidebar.text_input("Función en términos de x", value=default_f
 # 3. Conversión a expresión simbólica con Sympy
 # --------------------------------------------------------------------------------
 x_sym = sp.Symbol('x', real=True)
+
 try:
     func_sym = sp.sympify(func_input)  # convierte la cadena en objeto simbólico
     # Lambdify para evaluación numérica
@@ -65,7 +66,7 @@ except Exception as e:
     st.error(f"Ocurrió un error al procesar la función: {e}")
     st.stop()
 
-# Mostrar la función actual
+# Mostrar la función actual en formato LaTeX
 st.write("### Función actual:")
 st.latex(rf"f(x) = {sp.latex(func_sym)}")
 
@@ -89,31 +90,38 @@ x_vals = np.linspace(x_min, x_max, num_points)
 # --------------------------------------------------------------------------------
 st.subheader("1. Verificación mediante la segunda derivada")
 
-# La CORRECCIÓN está en evaluar punto a punto para construir un array
+# Evaluamos la segunda derivada en cada punto con manejo de errores de dominio
 second_deriv_list = []
-for x_val in x_vals:
+for xv in x_vals:
     try:
-        # Evaluamos la segunda derivada en cada punto
-        val = f_second_derivative(x_val)
+        val = f_second_derivative(xv)
     except:
+        # Si el cálculo falla (por ejemplo, log(x) con x <= 0), se asigna NaN
         val = np.nan
     second_deriv_list.append(val)
 
-# Convertimos la lista a array de floats
 second_deriv_vals = np.array(second_deriv_list, dtype=float)
 
-# Aplicamos la máscara de finitos (para evitar problemas con log(), etc.)
+# Creamos una máscara para valores finitos
 finite_mask = np.isfinite(second_deriv_vals)
 
+# Si ningún valor es finito, no se puede verificar la convexidad numéricamente
 if not np.any(finite_mask):
-    # No hay valores finitos -> dominio inválido, etc.
-    st.warning("La segunda derivada no es finita en todo el intervalo. Revisa el dominio de la función.")
+    st.warning(
+        "La segunda derivada no es finita o está fuera de dominio "
+        f"en todo el intervalo [{x_min}, {x_max}]. "
+        "Revisa el dominio de la función o ajusta el intervalo."
+    )
 else:
     valid_second_deriv = second_deriv_vals[finite_mask]
+    # Si todos los valores válidos son >= 0, la función es convexa en esa región
     if np.all(valid_second_deriv >= 0):
         st.success(f"La función es convexa en el intervalo [{x_min}, {x_max}] (f''(x) ≥ 0).")
     else:
-        st.warning(f"La función NO es convexa en todo el intervalo [{x_min}, {x_max}], pues existen puntos con f''(x) < 0.")
+        st.warning(
+            f"La función NO es convexa en todo el intervalo [{x_min}, {x_max}], "
+            "pues existen puntos con f''(x) < 0."
+        )
 
 st.markdown(
     r"""
@@ -136,67 +144,99 @@ with col2:
 with col3:
     lam = st.slider("λ (lambda)", 0.0, 1.0, 0.5, step=0.1)
 
+# Calculamos x_mid = λ*x1 + (1 - λ)*x2
 x_mid = lam*x1 + (1 - lam)*x2
+
+# Verificación de la definición: f(λx1 + (1−λ)x2) ≤ λf(x1) + (1−λ)f(x2)
 try:
-    f_mid = f(x_mid)
-    f_combo = lam*f(x1) + (1 - lam)*f(x2)
-    if np.isfinite(f_mid) and np.isfinite(f_combo):
+    fx1 = f(x1)
+    fx2 = f(x2)
+    fx_mid = f(x_mid)
+    
+    # Verificamos si son valores finitos
+    if not (np.isfinite(fx1) and np.isfinite(fx2) and np.isfinite(fx_mid)):
+        st.warning("La función no está bien definida (NaN/Inf) en x1, x2 o x_mid.")
+    else:
+        f_combo = lam*fx1 + (1 - lam)*fx2
         st.markdown(
             f"""
             - \\( x_1 = {x1}, x_2 = {x2}, \lambda = {lam} \\)
             - \\( \\lambda x_1 + (1-\\lambda)x_2 = {x_mid} \\)
-            - \\( f(x_1) = {f(x1)}, f(x_2) = {f(x2)}, f(x_{{mid}}) = f({x_mid}) = {f_mid} \\)
+            - \\( f(x_1) = {fx1}, \quad f(x_2) = {fx2}, \quad f(x_{{mid}}) = {fx_mid} \\)
             - \\( \\lambda f(x_1) + (1-\\lambda) f(x_2) = {f_combo} \\)
             """
         )
-        if f_mid <= f_combo:
+        if fx_mid <= f_combo:
             st.success("¡Se cumple la desigualdad de convexidad para estos valores!")
         else:
             st.error("No se cumple la definición de convexidad para estos valores.")
-    else:
-        st.warning("La función no está bien definida en estos puntos (posibles valores NaN o Inf).")
 except Exception as e:
-    st.error(f"Error al evaluar f(x) con los valores dados: {e}")
+    st.error(f"Error al evaluar la función en x1, x2 o x_mid: {e}")
 
 # --------------------------------------------------------------------------------
-# 7. Visualización Gráfica: f(x) y segunda derivada
-#    - Coloreamos regiones convexas (f''(x)>=0) y no convexas (f''(x)<0).
-#    - Incluimos también la cuerda entre (x1, f(x1)) y (x2, f(x2)).
+# 7. Visualización Gráfica: f(x), segunda derivada, y cuerda
 # --------------------------------------------------------------------------------
 st.subheader("3. Visualización Gráfica")
 
 fig, ax = plt.subplots(figsize=(6, 4))
 
-# Graficar la función en el rango
-y_vals = [f(val) for val in x_vals]  # Evaluación punto a punto, por si hay dominios restringidos
+# Evaluamos la función f(x) en cada punto (manejo de dominio)
+y_vals = []
+for xv in x_vals:
+    try:
+        val = f(xv)
+    except:
+        val = np.nan
+    y_vals.append(val)
+
+y_vals = np.array(y_vals, dtype=float)
+
+# Graficamos f(x)
 ax.plot(x_vals, y_vals, label=rf"$f(x) = {func_input}$", color='blue')
 
-# (Opcional) Graficar la segunda derivada en el mismo eje
-ax.plot(x_vals, second_deriv_vals, '--', label=r"$f''(x)$ (segunda derivada)", color='purple')
+# Graficamos la segunda derivada (donde sea finita)
+ax.plot(x_vals, second_deriv_vals, '--', label=r"$f''(x)$ (2da deriv.)", color='purple')
 
-# Resaltar regiones convexas / no convexas en base a la segunda derivada
+# Resaltamos regiones donde f''(x) >= 0 (convexas) y f''(x) < 0 (no convexas)
 convex_region = (second_deriv_vals >= 0) & np.isfinite(second_deriv_vals)
-ax.fill_between(x_vals, y_vals, color='green', alpha=0.2, where=convex_region, label="Región convexa")
-ax.fill_between(x_vals, y_vals, color='red', alpha=0.2, where=~convex_region, label="Región NO convexa")
+non_convex_region = (second_deriv_vals < 0) & np.isfinite(second_deriv_vals)
 
-# Graficar puntos x1, x2, x_mid
+# Para poder "rellenar" de forma adecuada, 
+# es mejor usar fill_between si la función está definida
+# (También se puede filtrar con np.isfinite(y_vals) si se desea)
+ax.fill_between(
+    x_vals, y_vals, color='green', alpha=0.2,
+    where=convex_region, label="Región convexa (f''(x)≥0)"
+)
+ax.fill_between(
+    x_vals, y_vals, color='red', alpha=0.2,
+    where=non_convex_region, label="Región NO convexa (f''(x)<0)"
+)
+
+# Graficamos los puntos x1, x2, x_mid si son finitos
 try:
     fx1 = f(x1)
     fx2 = f(x2)
     fx_mid = f(x_mid)
-    ax.scatter(x1, fx1, color='red', zorder=5, label='(x1, f(x1))')
-    ax.scatter(x2, fx2, color='red', zorder=5, label='(x2, f(x2))')
+    
+    if np.isfinite(fx1):
+        ax.scatter(x1, fx1, color='red', zorder=5, label='(x1, f(x1))')
+    if np.isfinite(fx2):
+        ax.scatter(x2, fx2, color='red', zorder=5, label='(x2, f(x2))')
     if np.isfinite(fx_mid):
         ax.scatter(x_mid, fx_mid, color='green', zorder=5, 
                    label=r'$x_{mid} = \lambda x_1 + (1-\lambda)x_2$')
-    
-    # Cuerda entre (x1, f(x1)) y (x2, f(x2))
-    if x2 != x1:
+
+    # Graficamos la cuerda entre (x1, f(x1)) y (x2, f(x2)) si x1 != x2
+    if x2 != x1 and np.isfinite(fx1) and np.isfinite(fx2):
         x_line = np.linspace(x1, x2, 100)
-        y_line = fx1 + (fx2 - fx1) * (x_line - x1)/(x2 - x1 + 1e-12)
+        # Recta que une (x1, f(x1)) con (x2, f(x2))
+        # Evitamos la división por cero sumando un eps pequeño
+        eps = 1e-12
+        y_line = fx1 + (fx2 - fx1) * (x_line - x1) / (x2 - x1 + eps)
         ax.plot(x_line, y_line, 'r--', label='Cuerda')
 except:
-    pass  # En caso de dominio inválido, no graficamos la cuerda
+    pass  # Si hay error de dominio, no graficamos estos puntos/cuerda
 
 ax.set_xlabel("x")
 ax.set_ylabel("f(x)")
@@ -213,8 +253,8 @@ st.markdown(
     """
     **Conclusiones**  
     - Si la segunda derivada \\(f''(x)\\) es no negativa en todo el intervalo, 
-      \\(f\\) es convexa en dicho intervalo.  
-    - Para verificar en puntos específicos la definición de convexidad, 
+      \\(f\\) es convexa en ese intervalo.  
+    - Para verificar puntualmente la definición de convexidad, 
       comparamos \\(f(\\lambda x_1 + (1-\\lambda)x_2)\\) con 
       \\(\\lambda f(x_1) + (1-\\lambda) f(x_2)\\).  
     - La visualización final muestra la función, la segunda derivada y las 
@@ -223,5 +263,3 @@ st.markdown(
 )
 
 st.info("Fin de la aplicación. ¡Modifica los parámetros en la barra lateral para seguir explorando!")
-
-
