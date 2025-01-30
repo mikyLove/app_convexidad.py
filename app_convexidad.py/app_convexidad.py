@@ -3,7 +3,7 @@ import numpy as np
 import sympy as sp
 import matplotlib.pyplot as plt
 
-# Configuración general de la página (opcional)
+# Configuración de la página (opcional)
 st.set_page_config(page_title="Demostración de Convexidad", layout="centered")
 
 # --------------------------------------------------------------------------------
@@ -19,7 +19,7 @@ st.markdown(
     - Elegir un **intervalo** para verificar automáticamente la convexidad usando 
       el **criterio de la segunda derivada** \\(f''(x) \\ge 0\\).
     - **Verificar** la definición de convexidad eligiendo \\( x_1, x_2 \\) y \\( \\lambda \\).
-    - Visualizar la función y su comportamiento (convexo o no convexo) en un rango definido.
+    - Visualizar la función y su comportamiento (convexo o no convexo) en el rango definido.
     
     ---
     """
@@ -66,7 +66,7 @@ except Exception as e:
     st.stop()
 
 # Mostrar la función actual
-st.write(f"### Función actual: ")
+st.write("### Función actual:")
 st.latex(rf"f(x) = {sp.latex(func_sym)}")
 
 # --------------------------------------------------------------------------------
@@ -81,22 +81,35 @@ if x_min >= x_max:
     st.error("El valor mínimo del intervalo debe ser menor que el máximo.")
     st.stop()
 
+# Generamos el vector de puntos x_vals
+x_vals = np.linspace(x_min, x_max, num_points)
+
 # --------------------------------------------------------------------------------
 # 5. Verificación de la convexidad mediante la segunda derivada
 # --------------------------------------------------------------------------------
 st.subheader("1. Verificación mediante la segunda derivada")
 
-x_vals = np.linspace(x_min, x_max, num_points)
-second_deriv_vals = f_second_derivative(x_vals)
+# La CORRECCIÓN está en evaluar punto a punto para construir un array
+second_deriv_list = []
+for x_val in x_vals:
+    try:
+        # Evaluamos la segunda derivada en cada punto
+        val = f_second_derivative(x_val)
+    except:
+        val = np.nan
+    second_deriv_list.append(val)
 
-# Asegurarnos de que no haya NaNs (pueden aparecer con log(x) en x<=0, etc.)
+# Convertimos la lista a array de floats
+second_deriv_vals = np.array(second_deriv_list, dtype=float)
+
+# Aplicamos la máscara de finitos (para evitar problemas con log(), etc.)
 finite_mask = np.isfinite(second_deriv_vals)
+
 if not np.any(finite_mask):
+    # No hay valores finitos -> dominio inválido, etc.
     st.warning("La segunda derivada no es finita en todo el intervalo. Revisa el dominio de la función.")
 else:
-    # Analizamos solo donde sea finita
     valid_second_deriv = second_deriv_vals[finite_mask]
-
     if np.all(valid_second_deriv >= 0):
         st.success(f"La función es convexa en el intervalo [{x_min}, {x_max}] (f''(x) ≥ 0).")
     else:
@@ -131,7 +144,7 @@ try:
         st.markdown(
             f"""
             - \\( x_1 = {x1}, x_2 = {x2}, \lambda = {lam} \\)
-            - \\( \lambda x_1 + (1-\\lambda)x_2 = {x_mid} \\)
+            - \\( \\lambda x_1 + (1-\\lambda)x_2 = {x_mid} \\)
             - \\( f(x_1) = {f(x1)}, f(x_2) = {f(x2)}, f(x_{{mid}}) = f({x_mid}) = {f_mid} \\)
             - \\( \\lambda f(x_1) + (1-\\lambda) f(x_2) = {f_combo} \\)
             """
@@ -155,10 +168,10 @@ st.subheader("3. Visualización Gráfica")
 fig, ax = plt.subplots(figsize=(6, 4))
 
 # Graficar la función en el rango
-y_vals = f(x_vals)
+y_vals = [f(val) for val in x_vals]  # Evaluación punto a punto, por si hay dominios restringidos
 ax.plot(x_vals, y_vals, label=rf"$f(x) = {func_input}$", color='blue')
 
-# Graficar la segunda derivada en el mismo eje (opcional)
+# (Opcional) Graficar la segunda derivada en el mismo eje
 ax.plot(x_vals, second_deriv_vals, '--', label=r"$f''(x)$ (segunda derivada)", color='purple')
 
 # Resaltar regiones convexas / no convexas en base a la segunda derivada
@@ -167,16 +180,23 @@ ax.fill_between(x_vals, y_vals, color='green', alpha=0.2, where=convex_region, l
 ax.fill_between(x_vals, y_vals, color='red', alpha=0.2, where=~convex_region, label="Región NO convexa")
 
 # Graficar puntos x1, x2, x_mid
-ax.scatter(x1, f(x1), color='red', zorder=5, label='(x1, f(x1))')
-ax.scatter(x2, f(x2), color='red', zorder=5, label='(x2, f(x2))')
-ax.scatter(x_mid, f_mid if np.isfinite(f_mid) else None, color='green', zorder=5, 
-           label=r'$x_{mid} = \lambda x_1 + (1-\lambda)x_2$')
-
-# Cuerda entre (x1, f(x1)) y (x2, f(x2))
-if x2 != x1:  # evitamos división por cero
-    x_line = np.linspace(x1, x2, 100)
-    y_line = f(x1) + (f(x2) - f(x1)) * (x_line - x1)/(x2 - x1 + 1e-12)
-    ax.plot(x_line, y_line, 'r--', label='Cuerda')
+try:
+    fx1 = f(x1)
+    fx2 = f(x2)
+    fx_mid = f(x_mid)
+    ax.scatter(x1, fx1, color='red', zorder=5, label='(x1, f(x1))')
+    ax.scatter(x2, fx2, color='red', zorder=5, label='(x2, f(x2))')
+    if np.isfinite(fx_mid):
+        ax.scatter(x_mid, fx_mid, color='green', zorder=5, 
+                   label=r'$x_{mid} = \lambda x_1 + (1-\lambda)x_2$')
+    
+    # Cuerda entre (x1, f(x1)) y (x2, f(x2))
+    if x2 != x1:
+        x_line = np.linspace(x1, x2, 100)
+        y_line = fx1 + (fx2 - fx1) * (x_line - x1)/(x2 - x1 + 1e-12)
+        ax.plot(x_line, y_line, 'r--', label='Cuerda')
+except:
+    pass  # En caso de dominio inválido, no graficamos la cuerda
 
 ax.set_xlabel("x")
 ax.set_ylabel("f(x)")
@@ -203,3 +223,5 @@ st.markdown(
 )
 
 st.info("Fin de la aplicación. ¡Modifica los parámetros en la barra lateral para seguir explorando!")
+
+
