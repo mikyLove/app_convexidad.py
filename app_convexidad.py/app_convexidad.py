@@ -42,14 +42,23 @@ func_examples = {
 }
 
 example_choice = st.sidebar.selectbox("Ejemplos disponibles", list(func_examples.keys()))
+
+# Al hacer click en "Usar ejemplo", pedimos confirmación para no sobrescribir bruscamente.
 if st.sidebar.button("Usar ejemplo"):
-    # Reemplaza el contenido del input con el ejemplo seleccionado
-    st.session_state["func_input"] = func_examples[example_choice]
+    # Confirmación (opcional): se podría omitir para simplificar
+    if st.sidebar.checkbox("Confirmar sobrescritura de la función"):
+        st.session_state["func_input"] = func_examples[example_choice]
+    else:
+        st.warning("Marca la casilla de confirmación para sobrescribir la función actual.")
 
 # 2.b. Entrada de función personalizada
 st.sidebar.subheader("Definir Función Personalizada")
-default_func = "x**2"  # valor por defecto
-func_input = st.sidebar.text_input("Función en términos de x", value=default_func, key="func_input")
+default_func = st.session_state["func_input"] if "func_input" in st.session_state else "x**2"
+func_input = st.sidebar.text_input(
+    "Función en términos de x", 
+    value=default_func, 
+    key="func_input"
+)
 
 # --------------------------------------------------------------------------------
 # 3. Conversión a expresión simbólica con Sympy
@@ -90,22 +99,30 @@ x_vals = np.linspace(x_min, x_max, num_points)
 # --------------------------------------------------------------------------------
 st.subheader("1. Verificación mediante la segunda derivada")
 
-# Evaluamos la segunda derivada en cada punto con manejo de errores de dominio
 second_deriv_list = []
+domain_issue_count = 0  # Para contar cuántos puntos fuera de dominio hay
+
 for xv in x_vals:
     try:
         val = f_second_derivative(xv)
+        # Verificamos si f(xv) está también definida
+        _ = f(xv)  # Si da error aquí, es que f(x) está fuera de dominio
     except:
-        # Si el cálculo falla (por ejemplo, log(x) con x <= 0), se asigna NaN
         val = np.nan
+        domain_issue_count += 1
     second_deriv_list.append(val)
 
 second_deriv_vals = np.array(second_deriv_list, dtype=float)
 
-# Creamos una máscara para valores finitos
 finite_mask = np.isfinite(second_deriv_vals)
 
-# Si ningún valor es finito, no se puede verificar la convexidad numéricamente
+# Aviso si hubo muchos puntos fuera de dominio
+if domain_issue_count > 0:
+    st.warning(
+        f"Se encontraron {domain_issue_count} puntos en el intervalo "
+        f"donde la función o su segunda derivada no está definida."
+    )
+
 if not np.any(finite_mask):
     st.warning(
         "La segunda derivada no es finita o está fuera de dominio "
@@ -114,7 +131,6 @@ if not np.any(finite_mask):
     )
 else:
     valid_second_deriv = second_deriv_vals[finite_mask]
-    # Si todos los valores válidos son >= 0, la función es convexa en esa región
     if np.all(valid_second_deriv >= 0):
         st.success(f"La función es convexa en el intervalo [{x_min}, {x_max}] (f''(x) ≥ 0).")
     else:
@@ -147,13 +163,11 @@ with col3:
 # Calculamos x_mid = λ*x1 + (1 - λ)*x2
 x_mid = lam*x1 + (1 - lam)*x2
 
-# Verificación de la definición: f(λx1 + (1−λ)x2) ≤ λf(x1) + (1−λ)f(x2)
 try:
     fx1 = f(x1)
     fx2 = f(x2)
     fx_mid = f(x_mid)
     
-    # Verificamos si son valores finitos
     if not (np.isfinite(fx1) and np.isfinite(fx2) and np.isfinite(fx_mid)):
         st.warning("La función no está bien definida (NaN/Inf) en x1, x2 o x_mid.")
     else:
@@ -201,16 +215,22 @@ ax.plot(x_vals, second_deriv_vals, '--', label=r"$f''(x)$ (2da deriv.)", color='
 convex_region = (second_deriv_vals >= 0) & np.isfinite(second_deriv_vals)
 non_convex_region = (second_deriv_vals < 0) & np.isfinite(second_deriv_vals)
 
-# Para poder "rellenar" de forma adecuada, 
-# es mejor usar fill_between si la función está definida
-# (También se puede filtrar con np.isfinite(y_vals) si se desea)
+# Para que el sombreado sea más claro y no dependa de si f(x) es positiva o negativa,
+# tomamos un rango vertical constante: y_min, y_max
+y_min_global = np.nanmin(y_vals)
+y_max_global = np.nanmax(y_vals)
+
+# Sombreado en verde donde f''(x) >= 0
 ax.fill_between(
-    x_vals, y_vals, color='green', alpha=0.2,
-    where=convex_region, label="Región convexa (f''(x)≥0)"
+    x_vals, y_min_global, y_max_global, 
+    where=convex_region, color='green', alpha=0.1,
+    label="x donde f''(x)≥0"
 )
+# Sombreado en rojo donde f''(x) < 0
 ax.fill_between(
-    x_vals, y_vals, color='red', alpha=0.2,
-    where=non_convex_region, label="Región NO convexa (f''(x)<0)"
+    x_vals, y_min_global, y_max_global, 
+    where=non_convex_region, color='red', alpha=0.1,
+    label="x donde f''(x)<0"
 )
 
 # Graficamos los puntos x1, x2, x_mid si son finitos
@@ -227,11 +247,9 @@ try:
         ax.scatter(x_mid, fx_mid, color='green', zorder=5, 
                    label=r'$x_{mid} = \lambda x_1 + (1-\lambda)x_2$')
 
-    # Graficamos la cuerda entre (x1, f(x1)) y (x2, f(x2)) si x1 != x2
+    # Graficamos la cuerda entre (x1, f(x1)) y (x2, f(x2))
     if x2 != x1 and np.isfinite(fx1) and np.isfinite(fx2):
         x_line = np.linspace(x1, x2, 100)
-        # Recta que une (x1, f(x1)) con (x2, f(x2))
-        # Evitamos la división por cero sumando un eps pequeño
         eps = 1e-12
         y_line = fx1 + (fx2 - fx1) * (x_line - x1) / (x2 - x1 + eps)
         ax.plot(x_line, y_line, 'r--', label='Cuerda')
@@ -263,3 +281,5 @@ st.markdown(
 )
 
 st.info("Fin de la aplicación. ¡Modifica los parámetros en la barra lateral para seguir explorando!")
+
+
